@@ -61,6 +61,11 @@
       let resolvedOwnerId = null;
 
       const setStatus = (message) => { result.textContent = message; };
+      const describeError = (error) => {
+        const details = error?.error_data || error?.error || error;
+        if (typeof details === "string") return details;
+        return details?.error_msg || details?.message || details?.error_reason || JSON.stringify(details) || "VK не вернул текст ошибки";
+      };
 
       async function getToken() {
         if (accessToken) return accessToken;
@@ -137,7 +142,7 @@
           grantButton.textContent = "Доступ предоставлен";
           setStatus("Доступ предоставлен. Теперь вставьте ссылку на сообщество и проверьте количество постов.");
         } catch (error) {
-          setStatus(`Доступ не предоставлен: ${error.message}`);
+          setStatus(`Доступ не предоставлен: ${describeError(error)}`);
           grantButton.disabled = false;
         }
       });
@@ -158,7 +163,7 @@
             deletePanel.classList.remove("hidden");
           }
         } catch (error) {
-          setStatus(`Не удалось проверить стену: ${error.message}`);
+          setStatus(`Не удалось проверить стену: ${describeError(error)}`);
         } finally {
           checkButton.disabled = false;
         }
@@ -185,7 +190,7 @@
           deletePanel.classList.add("hidden");
           posts = [];
         } catch (error) {
-          setStatus(`Остановка после ${deleted} из ${posts.length}: ${error.message}\nПовторная проверка покажет оставшиеся посты.`);
+          setStatus(`Остановка после ${deleted} из ${posts.length}: ${describeError(error)}\nПовторная проверка покажет оставшиеся посты.`);
         } finally {
           deleteButton.disabled = false;
           checkButton.disabled = false;
