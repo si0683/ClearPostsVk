@@ -26,13 +26,16 @@
   <main>
     <section class="card">
       <h1>Очистка стены сообщества</h1>
-      <p>Инструмент удаляет только записи со стены. Фото, видео, комментарии, товары и обсуждения не затрагиваются.</p>
+      <p>Инструмент удаляет только записи со стены. Им может пользоваться любой владелец или администратор сообщества — только в своих сообществах.</p>
 
-      <label for="groupId">ID сообщества</label>
-      <input id="groupId" inputmode="numeric" value="227205617" aria-describedby="hint" />
-      <p id="hint">Для ссылки <code>vk.ru/club227205617</code> укажите <code>227205617</code>.</p>
+      <button id="grantButton">1. Предоставить доступ к стене и сообществам</button>
+      <p id="accessHint">Сначала подтвердите запрос VK. Токен доступа не сохраняется и действует только в открытой странице.</p>
 
-      <button id="checkButton">Проверить количество постов</button>
+      <label for="communityUrl">Ссылка на сообщество</label>
+      <input id="communityUrl" type="url" placeholder="https://vk.ru/club123456 или vk.ru/название" aria-describedby="hint" />
+      <p id="hint">Просто вставьте ссылку на сообщество VK. Поддерживаются ссылки с ID и короткие адреса.</p>
+
+      <button id="checkButton" disabled>2. Проверить количество постов</button>
       <div id="result" class="status" role="status"></div>
 
       <div id="deletePanel" class="hidden">
@@ -47,16 +50,17 @@
     (() => {
       const APP_ID = 54762487;
       const API_VERSION = "5.199";
-      const groupIdInput = document.getElementById("groupId");
+      const communityUrlInput = document.getElementById("communityUrl");
+      const grantButton = document.getElementById("grantButton");
       const checkButton = document.getElementById("checkButton");
       const deleteButton = document.getElementById("deleteButton");
       const deletePanel = document.getElementById("deletePanel");
       const result = document.getElementById("result");
       let accessToken = null;
       let posts = [];
+      let resolvedOwnerId = null;
 
       const setStatus = (message) => { result.textContent = message; };
-      const validGroupId = () => /^\d+$/.test(groupIdInput.value.trim());
 
       async function getToken() {
         if (accessToken) return accessToken;
@@ -69,6 +73,7 @@
       }
 
       async function callApi(method, params) {
+        if (!accessToken) throw new Error("Сначала нажмите «Предоставить доступ к стене и сообществам».");
         const token = await getToken();
         const query = new URLSearchParams({ ...params, access_token: token, v: API_VERSION });
         const response = await fetch(`https://api.vk.com/method/${method}?${query}`);
@@ -77,9 +82,34 @@
         return data.response;
       }
 
+      async function resolveCommunityOwnerId() {
+        const rawUrl = communityUrlInput.value.trim();
+        if (!rawUrl) throw new Error("Вставьте ссылку на сообщество VK.");
+
+        let address = rawUrl;
+        if (!/^https?:\/\//i.test(address)) address = `https://${address}`;
+        let url;
+        try {
+          url = new URL(address);
+        } catch {
+          throw new Error("Не удалось распознать ссылку. Вставьте ссылку вида vk.ru/club123 или vk.ru/название.");
+        }
+
+        const screenName = url.pathname.replace(/^\/+|\/+$/g, "").split("/")[0];
+        if (!screenName) throw new Error("В ссылке не найдено сообщество.");
+
+        const numericMatch = screenName.match(/^(?:club|public|event)(\d+)$/i);
+        if (numericMatch) return `-${numericMatch[1]}`;
+
+        const resolved = await callApi("utils.resolveScreenName", { screen_name: screenName });
+        if (!resolved || !["group", "page", "event"].includes(resolved.type)) {
+          throw new Error("Ссылка должна вести на сообщество VK, а не на личную страницу.");
+        }
+        return `-${resolved.object_id}`;
+      }
+
       async function loadPosts() {
-        if (!validGroupId()) throw new Error("Введите числовой ID сообщества.");
-        const ownerId = `-${groupIdInput.value.trim()}`;
+        const ownerId = await resolveCommunityOwnerId();
         const allPosts = [];
         let offset = 0;
         while (true) {
@@ -88,16 +118,38 @@
           offset += page.items.length;
           if (page.items.length === 0 || offset >= page.count) break;
         }
-        return allPosts;
+        return { ownerId, items: allPosts };
       }
+
+      communityUrlInput.addEventListener("input", () => {
+        resolvedOwnerId = null;
+        posts = [];
+        deletePanel.classList.add("hidden");
+      });
+
+      grantButton.addEventListener("click", async () => {
+        grantButton.disabled = true;
+        try {
+          setStatus("Откройте окно VK и подтвердите доступ…");
+          await getToken();
+          checkButton.disabled = false;
+          grantButton.textContent = "Доступ предоставлен";
+          setStatus("Доступ предоставлен. Теперь вставьте ссылку на сообщество и проверьте количество постов.");
+        } catch (error) {
+          setStatus(`Доступ не предоставлен: ${error.message}`);
+          grantButton.disabled = false;
+        }
+      });
 
       checkButton.addEventListener("click", async () => {
         deletePanel.classList.add("hidden");
         posts = [];
         checkButton.disabled = true;
         try {
-          setStatus("Запрашиваю доступ и считаю посты…");
-          posts = await loadPosts();
+          setStatus("Считаю посты…");
+          const loaded = await loadPosts();
+          resolvedOwnerId = loaded.ownerId;
+          posts = loaded.items;
           if (posts.length === 0) {
             setStatus("На стене нет доступных для удаления постов.");
           } else {
@@ -112,15 +164,18 @@
       });
 
       deleteButton.addEventListener("click", async () => {
-        const groupId = groupIdInput.value.trim();
-        const accepted = window.confirm(`Удалить ${posts.length} постов со стены сообщества club${groupId}? Это действие нельзя отменить.`);
+        if (!resolvedOwnerId) {
+          setStatus("Ссылка изменилась. Сначала проверьте количество постов ещё раз.");
+          return;
+        }
+        const accepted = window.confirm(`Удалить ${posts.length} постов со стены сообщества по указанной ссылке? Это действие нельзя отменить.`);
         if (!accepted) return;
         deleteButton.disabled = true;
         checkButton.disabled = true;
         let deleted = 0;
         try {
           for (const post of posts) {
-            await callApi("wall.delete", { owner_id: `-${groupId}`, post_id: String(post.id) });
+            await callApi("wall.delete", { owner_id: resolvedOwnerId, post_id: String(post.id) });
             deleted += 1;
             setStatus(`Удалено ${deleted} из ${posts.length} постов…`);
             await new Promise(resolve => setTimeout(resolve, 350));
@@ -138,6 +193,7 @@
 
       vkBridge.send("VKWebAppInit").catch(() => {
         setStatus("Откройте страницу внутри вашего мини-приложения VK.");
+        grantButton.disabled = true;
       });
     })();
   </script>

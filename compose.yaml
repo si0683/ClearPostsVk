@@ -1,0 +1,7 @@
+services:
+  vk-wall-cleaner:
+    build: .
+    container_name: clearpostsvk-demo
+    ports:
+      - "18765:80"
+    restart: unless-stopped
