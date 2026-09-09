@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Очистка стены VK</title>
+  <title>Счётчик постов VK</title>
   <style>
     :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     body { margin: 0; background: #f2f3f5; color: #1d1d1f; }
@@ -16,20 +16,17 @@
     input { padding: 12px; border: 1px solid #d3d9de; }
     button { border: 0; padding: 12px 14px; margin-top: 12px; background: #2688eb; color: #fff; font-weight: 600; cursor: pointer; }
     button:disabled { opacity: .5; cursor: not-allowed; }
-    .danger { background: #e64646; }
-    .notice { margin-top: 18px; padding: 12px; background: #fff3cd; border-radius: 9px; color: #624d00; }
     .status { margin-top: 18px; min-height: 24px; white-space: pre-wrap; }
-    .hidden { display: none; }
   </style>
 </head>
 <body>
   <main>
     <section class="card">
-      <h1>Очистка стены сообщества</h1>
-      <p>Инструмент удаляет только записи со стены. Им может пользоваться любой владелец или администратор сообщества — только в своих сообществах.</p>
+      <h1>Счётчик постов сообщества</h1>
+      <p>Вставьте ссылку на сообщество VK, чтобы узнать количество записей на его стене. Приложение ничего не изменяет и не удаляет.</p>
 
-      <button id="grantButton">1. Предоставить доступ к стене и сообществам</button>
-      <p id="accessHint">Сначала подтвердите запрос VK. Токен доступа не сохраняется и действует только в открытой странице.</p>
+      <button id="grantButton">1. Предоставить доступ</button>
+      <p id="accessHint">Сначала подтвердите запрос VK. Токен не сохраняется и действует только в открытой странице.</p>
 
       <label for="communityUrl">Ссылка на сообщество</label>
       <input id="communityUrl" type="url" placeholder="https://vk.ru/club123456 или vk.ru/название" aria-describedby="hint" />
@@ -37,11 +34,6 @@
 
       <button id="checkButton" disabled>2. Проверить количество постов</button>
       <div id="result" class="status" role="status"></div>
-
-      <div id="deletePanel" class="hidden">
-        <div class="notice">Удалённые записи нельзя восстановить. Проверьте ID сообщества перед подтверждением.</div>
-        <button id="deleteButton" class="danger">Удалить все найденные посты</button>
-      </div>
     </section>
   </main>
 
@@ -53,12 +45,8 @@
       const communityUrlInput = document.getElementById("communityUrl");
       const grantButton = document.getElementById("grantButton");
       const checkButton = document.getElementById("checkButton");
-      const deleteButton = document.getElementById("deleteButton");
-      const deletePanel = document.getElementById("deletePanel");
       const result = document.getElementById("result");
       let accessToken = null;
-      let posts = [];
-      let resolvedOwnerId = null;
 
       const setStatus = (message) => { result.textContent = message; };
       const describeError = (error) => {
@@ -71,14 +59,14 @@
         if (accessToken) return accessToken;
         const response = await vkBridge.send("VKWebAppGetAuthToken", {
           app_id: APP_ID,
-          scope: "wall,groups"
+          scope: "groups"
         });
         accessToken = response.access_token;
         return accessToken;
       }
 
       async function callApi(method, params) {
-        if (!accessToken) throw new Error("Сначала нажмите «Предоставить доступ к стене и сообществам».");
+        if (!accessToken) throw new Error("Сначала нажмите «Предоставить доступ».");
         const token = await getToken();
         const data = await vkBridge.send("VKWebAppCallAPIMethod", {
           method,
@@ -114,24 +102,11 @@
         return `-${resolved.object_id}`;
       }
 
-      async function loadPosts() {
+      async function loadPostCount() {
         const ownerId = await resolveCommunityOwnerId();
-        const allPosts = [];
-        let offset = 0;
-        while (true) {
-          const page = await callApi("wall.get", { owner_id: ownerId, count: "100", offset: String(offset) });
-          allPosts.push(...page.items);
-          offset += page.items.length;
-          if (page.items.length === 0 || offset >= page.count) break;
-        }
-        return { ownerId, items: allPosts };
+        const page = await callApi("wall.get", { owner_id: ownerId, count: "1", offset: "0" });
+        return page.count;
       }
-
-      communityUrlInput.addEventListener("input", () => {
-        resolvedOwnerId = null;
-        posts = [];
-        deletePanel.classList.add("hidden");
-      });
 
       grantButton.addEventListener("click", async () => {
         grantButton.disabled = true;
@@ -140,7 +115,7 @@
           await getToken();
           checkButton.disabled = false;
           grantButton.textContent = "Доступ предоставлен";
-          setStatus("Доступ предоставлен. Теперь вставьте ссылку на сообщество и проверьте количество постов.");
+          setStatus("Доступ предоставлен. Вставьте ссылку на сообщество и нажмите кнопку проверки.");
         } catch (error) {
           setStatus(`Доступ не предоставлен: ${describeError(error)}`);
           grantButton.disabled = false;
@@ -148,51 +123,14 @@
       });
 
       checkButton.addEventListener("click", async () => {
-        deletePanel.classList.add("hidden");
-        posts = [];
         checkButton.disabled = true;
         try {
           setStatus("Считаю посты…");
-          const loaded = await loadPosts();
-          resolvedOwnerId = loaded.ownerId;
-          posts = loaded.items;
-          if (posts.length === 0) {
-            setStatus("На стене нет доступных для удаления постов.");
-          } else {
-            setStatus(`Найдено постов: ${posts.length}.`);
-            deletePanel.classList.remove("hidden");
-          }
+          const count = await loadPostCount();
+          setStatus(`Количество постов на стене: ${count}.`);
         } catch (error) {
           setStatus(`Не удалось проверить стену: ${describeError(error)}`);
         } finally {
-          checkButton.disabled = false;
-        }
-      });
-
-      deleteButton.addEventListener("click", async () => {
-        if (!resolvedOwnerId) {
-          setStatus("Ссылка изменилась. Сначала проверьте количество постов ещё раз.");
-          return;
-        }
-        const accepted = window.confirm(`Удалить ${posts.length} постов со стены сообщества по указанной ссылке? Это действие нельзя отменить.`);
-        if (!accepted) return;
-        deleteButton.disabled = true;
-        checkButton.disabled = true;
-        let deleted = 0;
-        try {
-          for (const post of posts) {
-            await callApi("wall.delete", { owner_id: resolvedOwnerId, post_id: String(post.id) });
-            deleted += 1;
-            setStatus(`Удалено ${deleted} из ${posts.length} постов…`);
-            await new Promise(resolve => setTimeout(resolve, 350));
-          }
-          setStatus(`Готово: удалено ${deleted} постов.`);
-          deletePanel.classList.add("hidden");
-          posts = [];
-        } catch (error) {
-          setStatus(`Остановка после ${deleted} из ${posts.length}: ${describeError(error)}\nПовторная проверка покажет оставшиеся посты.`);
-        } finally {
-          deleteButton.disabled = false;
           checkButton.disabled = false;
         }
       });
