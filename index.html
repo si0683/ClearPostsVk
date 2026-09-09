@@ -75,9 +75,10 @@
       async function callApi(method, params) {
         if (!accessToken) throw new Error("Сначала нажмите «Предоставить доступ к стене и сообществам».");
         const token = await getToken();
-        const query = new URLSearchParams({ ...params, access_token: token, v: API_VERSION });
-        const response = await fetch(`https://api.vk.com/method/${method}?${query}`);
-        const data = await response.json();
+        const data = await vkBridge.send("VKWebAppCallAPIMethod", {
+          method,
+          params: { ...params, access_token: token, v: API_VERSION }
+        });
         if (data.error) throw new Error(data.error.error_msg || "Ошибка VK API");
         return data.response;
       }
